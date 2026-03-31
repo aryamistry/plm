@@ -7,10 +7,61 @@ A production-grade Node.js/Express backend for a **Product Lifecycle Management 
 - **Runtime**: Node.js (v20+)
 - **Framework**: Express.js
 - **Database**: PostgreSQL (raw SQL via `pg`)
-- **Auth**: JWT (access + refresh token pattern)
-- **Validation**: Zod
+- **Auth**: JWT (access + refresh token pattern, DB-backed)
+- **Validation**: Zod (with password complexity)
 - **Password Hashing**: bcryptjs (saltRounds: 12)
+- **Security**: helmet (CSP), cors, rate limiting, X-Request-ID tracing
 - **Testing**: Jest + Supertest
+
+---
+
+## Quick Demo Walkthrough
+
+Run the full ECO lifecycle in ~5 minutes:
+
+```bash
+# 1. Start the backend
+npm run dev
+
+# Default admin account (created by apply-schema.js):
+# Email:    admin@plm.local
+# Password: Admin123!
+
+# Or: the first account you sign up becomes Admin automatically.
+# All subsequent signups get Operations role.
+
+# 2. Login with the default admin
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@plm.local","password":"Admin123!"}'
+# → Save the accessToken
+
+# 5. Create a product
+curl -X POST http://localhost:3000/api/products \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"product_code":"PROD-001","name":"Wooden Table","sale_price":100,"cost_price":50}'
+# → Note the product id
+
+# 6. Create an ECO
+curl -X POST http://localhost:3000/api/ecos \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Price Update v2","type":"PRODUCT","product_id":1,"version_update":true}'
+
+# 7. Propose changes
+curl -X POST http://localhost:3000/api/ecos/1/changes \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"new_sale_price":150,"new_cost_price":70}'
+
+# 8. Submit ECO
+curl -X POST http://localhost:3000/api/ecos/1/submit \
+  -H "Authorization: Bearer <TOKEN>"
+
+# 9. Approve (as approver role)
+# 10. Verify: GET /api/products/1/versions → version 2 is ACTIVE
+```
 
 ---
 
@@ -27,35 +78,26 @@ npm install
 
 1. Create a PostgreSQL database:
 ```sql
-CREATE DATABASE plm_db;
+CREATE DATABASE PLM;
 ```
 
-2. Run the schema:
+2. Apply schema and seed data:
 ```bash
-psql -U your_user -d plm_db -f db/schema.sql
+node db/apply-schema.js
 ```
 
-This creates all tables, indexes, and seeds the 4 roles (engineering, approver, operations, admin).
+This creates all tables, indexes, constraints, and seeds 4 roles + 4 ECO stages.
 
 ### 3. Environment Variables
 
 Copy `.env.example` to `.env` and fill in your values:
 
-```bash
-cp .env.example .env
-```
-
 | Variable | Description | Default |
 |---|---|---|
-| `NODE_ENV` | Environment mode | `development` |
-| `PORT` | Server port | `3000` |
 | `DATABASE_URL` | PostgreSQL connection string | — |
 | `JWT_ACCESS_SECRET` | JWT access token secret (min 64 chars) | — |
 | `JWT_REFRESH_SECRET` | JWT refresh token secret (min 64 chars) | — |
-| `JWT_ACCESS_EXPIRES_IN` | Access token TTL | `15m` |
-| `JWT_REFRESH_EXPIRES_IN` | Refresh token TTL | `7d` |
 | `ALLOWED_ORIGINS` | Comma-separated CORS origins | `http://localhost:5173` |
-| `BCRYPT_SALT_ROUNDS` | bcrypt salt rounds | `12` |
 
 ### 4. Run Dev Server
 
@@ -69,7 +111,49 @@ npm run dev
 npm test
 ```
 
-> Tests require a running PostgreSQL database. Point `DATABASE_URL` to a test database.
+---
+
+## Database ERD
+
+```
+┌──────────┐     ┌──────────────────┐     ┌────────────┐
+│  roles   │←────│     users        │     │  products   │
+└──────────┘     └──────────────────┘     └─────┬──────┘
+                         │                       │
+                         │              ┌────────┴────────┐
+                         │              │product_versions  │
+                         │              │(ACTIVE/ARCHIVED) │
+                         │              └─────────────────┘
+                         │
+                         │         ┌──────────┐     ┌──────────────┐
+                         │         │   boms   │────▶│ bom_versions │
+                         │         └──────────┘     └──────┬───────┘
+                         │                                 │
+                         │              ┌──────────────────┴─────────────┐
+                         │              │ bom_components │ bom_operations │
+                         │              └────────────────┴───────────────┘
+                         │
+          ┌──────────────┴──────────────┐
+          │           ecos              │
+          │ (NEW/IN_PROGRESS/DONE/      │
+          │  REJECTED)                  │
+          └──────┬──────┬──────┬────────┘
+                 │      │      │
+    ┌────────────┤      │      ├────────────────────┐
+    │eco_product │      │      │eco_bom_component   │
+    │_changes    │      │      │_changes            │
+    └────────────┘      │      └────────────────────┘
+              ┌─────────┴────────┐
+              │  eco_approvals   │     ┌─────────────────────┐
+              │ (PENDING/        │     │eco_bom_operation     │
+              │  APPROVED/       │     │_changes              │
+              │  REJECTED)       │     └─────────────────────┘
+              └──────────────────┘
+
+  ┌────────────────┐  ┌───────────────┐
+  │ refresh_tokens │  │  audit_logs   │
+  └────────────────┘  └───────────────┘
+```
 
 ---
 
@@ -77,7 +161,7 @@ npm test
 
 ```
 ┌─────────┐    Submit     ┌──────────────┐   All Approved    ┌──────┐
-│   NEW   │ ────────────> │ IN_PROGRESS  │ ────────────────> │ DONE │
+│   NEW   │ ────────────▶ │ IN_PROGRESS  │ ────────────────▶ │ DONE │
 │         │               │ (Approval    │                   │      │
 │ Propose │               │  stages)     │                   │      │
 │ Changes │               │              │                   │      │
@@ -92,14 +176,6 @@ npm test
                           └──────────┘
 ```
 
-1. **NEW**: ECO is created. Engineer proposes changes (product pricing or BoM components/operations).
-2. **Submit**: ECO advances to the next stage. If the stage requires approval, pending approval records are created for all users with `approver` role.
-3. **Approval**: Each approver can approve or reject. If ANY approver rejects, the entire ECO is rejected. If ALL approve, it advances to the next stage.
-4. **Validate**: For stages that don't require approval, an admin/approver can validate to advance.
-5. **DONE**: When the ECO reaches the final stage (or all stages pass), `applyECO` runs as a DB transaction:
-   - `version_update=true`: Creates a new version and archives the old one
-   - `version_update=false`: Updates data in-place (no new version)
-
 ---
 
 ## API Endpoint Summary
@@ -107,7 +183,7 @@ npm test
 ### Auth (`/api/auth`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/auth/signup` | Register a new user |
+| POST | `/api/auth/signup` | Register (operations role) |
 | POST | `/api/auth/login` | Login and get tokens |
 | POST | `/api/auth/refresh` | Refresh access token |
 | POST | `/api/auth/logout` | Invalidate refresh token |
@@ -118,13 +194,14 @@ npm test
 | GET | `/api/users` | List all users |
 | GET | `/api/users/:id` | Get user by ID |
 | PATCH | `/api/users/:id` | Update user |
+| PATCH | `/api/users/:id/role` | Change user role |
 | DELETE | `/api/users/:id` | Delete user |
 
 ### Products (`/api/products`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/products` | Create product (v1) |
-| GET | `/api/products` | List products (paginated) |
+| POST | `/api/products` | Create product (with product_code) |
+| GET | `/api/products` | List products (paginated, searchable) |
 | GET | `/api/products/:id` | Get product + all versions |
 | GET | `/api/products/:id/versions` | Get version history |
 | PATCH | `/api/products/:id` | Blocked — use ECO |
@@ -182,10 +259,19 @@ npm test
 
 | Role | Access |
 |------|--------|
-| `admin` | Full access. Manage users, stages, view all data |
+| `admin` | Full access. Manage users/roles, stages, view all data |
 | `engineering` | Create/edit ECOs, propose changes, create products/BoMs |
 | `approver` | View ECOs, approve/reject at approval stages |
 | `operations` | Read-only: ACTIVE products, BoMs, DONE ECOs |
+
+---
+
+## Known Limitations
+
+- **Attachment storage**: Attachments are stored as text URLs/notes, not binary files. A production deploy would use S3/GCS.
+- **Email notifications**: No email when approvals are requested. Would integrate SendGrid/SES in production.
+- **Audit log UI**: Audit logs exist in DB but no admin UI to browse them yet.
+- **Concurrent ECOs**: Multiple ECOs for the same product can exist; applying one does not block others.
 
 ---
 

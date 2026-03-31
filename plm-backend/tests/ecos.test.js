@@ -1,4 +1,4 @@
-const { app, pool, request, cleanDatabase, seedRoles, seedStages, createUserAndLogin } = require('./setup');
+const { app, pool, request, cleanDatabase, seedRoles, seedStages, createUserAndLogin, createProduct } = require('./setup');
 
 beforeAll(async () => {
   await seedRoles();
@@ -24,12 +24,9 @@ describe('ECOs Module', () => {
     engineerToken = engineer.accessToken;
     adminToken = admin.accessToken;
 
-    // Create a product
-    const p = await request(app)
-      .post('/api/products')
-      .set('Authorization', `Bearer ${engineerToken}`)
-      .send({ name: 'ECO Test Product', sale_price: 100, cost_price: 50 });
-    productId = p.body.data.id;
+    // Create a product using helper
+    const product = await createProduct(engineerToken, { name: 'ECO Test Product', sale_price: 100, cost_price: 50 });
+    productId = product.id;
   });
 
   describe('POST /api/ecos', () => {

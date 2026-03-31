@@ -18,7 +18,7 @@ const pageTitles = {
 export default function Topbar() {
   const location = useLocation();
   const { user } = useAuthStore();
-  const { data: approvalsData } = useApprovals();
+  const { data: approvalsData } = useApprovals(canAccessApprovals(user));
   const pendingCount = approvalsData?.data?.length || 0;
 
   const path = location.pathname;

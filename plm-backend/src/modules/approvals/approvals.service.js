@@ -5,7 +5,7 @@ const ecosService = require('../ecos/ecos.service');
 async function getPendingApprovals(userId) {
   const result = await pool.query(
     `SELECT ea.*, e.title AS eco_title, e.type AS eco_type, e.status AS eco_status,
-            p.name AS product_name, es.name AS stage_name
+            p.name AS product_name, es.name AS stage_name, e.created_at
      FROM eco_approvals ea
      JOIN ecos e ON e.id = ea.eco_id
      JOIN products p ON p.id = e.product_id
@@ -68,9 +68,9 @@ async function approveEco(ecoId, userId) {
       );
 
       if (nextStageResult.rows.length === 0) {
-        // No more stages — apply ECO
+        // No more stages — apply ECO within same transaction
+        await ecosService.applyEco(ecoId, userId, client);
         await client.query('COMMIT');
-        await ecosService.applyEco(ecoId, userId);
         return { message: 'All approved. ECO applied successfully.' };
       }
 
@@ -101,9 +101,9 @@ async function approveEco(ecoId, userId) {
       );
 
       if (furtherStages.rows.length === 0 && !nextStage.requires_approval) {
-        // Final stage, no approval needed — apply ECO
+        // Final stage, no approval needed — apply ECO within same transaction
+        await ecosService.applyEco(ecoId, userId, client);
         await client.query('COMMIT');
-        await ecosService.applyEco(ecoId, userId);
         return { message: 'All approved. ECO applied successfully.' };
       }
     }

@@ -1,5 +1,5 @@
 const usersService = require('./users.service');
-const { success, successPaginated, error } = require('../../utils/apiResponse');
+const { success, successPaginated } = require('../../utils/apiResponse');
 const { parsePagination, buildPaginationMeta } = require('../../utils/pagination');
 
 async function getAll(req, res, next) {
@@ -23,7 +23,20 @@ async function getById(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const user = await usersService.updateUser(parseInt(req.params.id, 10), req.body);
+    const user = await usersService.updateUser(parseInt(req.params.id, 10), req.body, req.user.userId);
+    return success(res, user);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateRole(req, res, next) {
+  try {
+    const user = await usersService.updateUserRole(
+      parseInt(req.params.id, 10),
+      req.body.role_id,
+      req.user.userId
+    );
     return success(res, user);
   } catch (err) {
     next(err);
@@ -39,4 +52,4 @@ async function remove(req, res, next) {
   }
 }
 
-module.exports = { getAll, getById, update, remove };
+module.exports = { getAll, getById, update, updateRole, remove };

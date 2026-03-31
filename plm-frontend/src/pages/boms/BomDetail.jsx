@@ -23,7 +23,7 @@ export default function BomDetail() {
 
   return (
     <div>
-      <PageHeader title={`BoM #${bom.id} — ${bom.product_name || 'Product'}`}>
+      <PageHeader title={`BoM #${bom.id} — ${bom.product_name || 'Product'}`} backTo="/boms" backLabel="Back to BoMs">
         {canCreateEco(user) && active && (
           <Link to={`/ecos/create?product_id=${bom.product_id}&bom_id=${bom.id}`}
             className="flex items-center gap-1.5 bg-accent-blue hover:bg-accent-blue-dim text-white px-3 py-2 rounded-input text-sm font-medium transition-colors">

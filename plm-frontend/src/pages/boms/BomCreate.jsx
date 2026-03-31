@@ -45,7 +45,7 @@ export default function BomCreate() {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader title="Create Bill of Materials" />
+      <PageHeader title="Create Bill of Materials" backTo="/boms" backLabel="Back to BoMs" />
 
       {/* Product Selection */}
       <div className="bg-bg-surface border border-bg-border rounded-card p-4 mb-4">

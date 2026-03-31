@@ -95,7 +95,7 @@ export default function EcoProposeChanges() {
 
   return (
     <div className="max-w-4xl">
-      <PageHeader title={`Propose Changes — ${eco.title}`} />
+      <PageHeader title={`Propose Changes — ${eco.title}`} backTo={`/ecos/${id}`} backLabel="Back to ECO" />
 
       {eco.type === 'PRODUCT' && (
         <div className="bg-bg-surface border border-bg-border rounded-card overflow-hidden">

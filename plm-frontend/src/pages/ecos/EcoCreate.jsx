@@ -44,7 +44,7 @@ export default function EcoCreate() {
 
   return (
     <div className="max-w-2xl">
-      <PageHeader title="Create ECO" />
+      <PageHeader title="Create ECO" backTo="/ecos" backLabel="Back to ECOs" />
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-6">

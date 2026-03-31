@@ -125,7 +125,7 @@ async function listEcos({ type, status, product_id, page, limit, offset, roleNam
 async function getEcoById(id) {
   const ecoResult = await pool.query(
     `SELECT e.*, es.name AS stage_name, es.sequence AS stage_sequence, es.requires_approval,
-            p.name AS product_name, u.name AS created_by_name
+            p.name AS product_name, p.product_code, u.name AS created_by_name
      FROM ecos e
      LEFT JOIN eco_stages es ON es.id = e.stage_id
      JOIN products p ON p.id = e.product_id
@@ -211,6 +211,16 @@ async function proposeChanges(ecoId, body, userId) {
       await client.query('DELETE FROM eco_bom_component_changes WHERE eco_id = $1', [ecoId]);
       await client.query('DELETE FROM eco_bom_operation_changes WHERE eco_id = $1', [ecoId]);
 
+      // Validate component_product_ids exist
+      for (const cc of component_changes) {
+        const check = await client.query('SELECT id FROM products WHERE id = $1', [cc.component_product_id]);
+        if (!check.rows.length) {
+          const err = new Error(`Component product ${cc.component_product_id} does not exist.`);
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+
       const insertedComponents = [];
       for (const cc of component_changes) {
         const ccResult = await client.query(
@@ -224,9 +234,9 @@ async function proposeChanges(ecoId, body, userId) {
       const insertedOperations = [];
       for (const oc of operation_changes) {
         const ocResult = await client.query(
-          `INSERT INTO eco_bom_operation_changes (eco_id, operation_name, old_time, new_time)
+          `INSERT INTO eco_bom_operation_changes (eco_id, operation_name, old_time_minutes, new_time_minutes)
            VALUES ($1, $2, $3, $4) RETURNING *`,
-          [ecoId, oc.operation_name, oc.old_time || null, oc.new_time || null]
+          [ecoId, oc.operation_name, oc.old_time_minutes || null, oc.new_time_minutes || null]
         );
         insertedOperations.push(ocResult.rows[0]);
       }
@@ -337,8 +347,8 @@ async function getEcoDiff(ecoId) {
 
     const operationDiff = opChanges.rows.map(oc => ({
       operation_name: oc.operation_name,
-      old_time: oc.old_time,
-      new_time: oc.new_time,
+      old_time_minutes: oc.old_time_minutes,
+      new_time_minutes: oc.new_time_minutes,
     }));
 
     return { type: 'BOM', component_diff: componentDiff, operation_diff: operationDiff };
@@ -388,16 +398,14 @@ async function submitEco(ecoId, userId) {
     );
 
     if (nextStageResult.rows.length === 0) {
-      // No next stage — apply directly
+      // No next stage — apply directly (within same transaction)
       await client.query(
         `UPDATE ecos SET status = 'IN_PROGRESS' WHERE id = $1`,
         [ecoId]
       );
+      await applyEco(ecoId, userId, client);
       await client.query('COMMIT');
-      // Apply ECO
-      await applyEco(ecoId, userId);
-      const updated = await pool.query('SELECT * FROM ecos WHERE id = $1', [ecoId]);
-      return updated.rows[0];
+      return await getEcoById(ecoId);
     }
 
     const nextStage = nextStageResult.rows[0];
@@ -405,7 +413,7 @@ async function submitEco(ecoId, userId) {
     if (nextStage.requires_approval) {
       // Create approval records for all approvers
       const approvers = await client.query(
-        `SELECT id FROM users WHERE role_id = (SELECT id FROM roles WHERE name = 'approver')`
+        `SELECT id FROM users WHERE role_id IN (SELECT id FROM roles WHERE name IN ('approver', 'admin'))`
       );
       for (const approver of approvers.rows) {
         await client.query(
@@ -477,7 +485,7 @@ async function validateEco(ecoId, userId) {
     );
 
     if (nextStageResult.rows.length === 0) {
-      // Final stage — apply ECO
+      // Final stage — apply ECO within same transaction
       await logAudit({
         action: 'ECO_VALIDATED',
         entityType: 'eco',
@@ -485,13 +493,26 @@ async function validateEco(ecoId, userId) {
         performedBy: userId,
         client,
       });
+      await applyEco(ecoId, userId, client);
       await client.query('COMMIT');
-      await applyEco(ecoId, userId);
-      const updated = await pool.query('SELECT * FROM ecos WHERE id = $1', [ecoId]);
-      return updated.rows[0];
+      return await getEcoById(ecoId);
     }
 
     const nextStage = nextStageResult.rows[0];
+
+    if (nextStage.requires_approval) {
+      // Create approval records for all approvers and admins
+      const approvers = await client.query(
+        `SELECT id FROM users WHERE role_id IN (SELECT id FROM roles WHERE name IN ('approver', 'admin'))`
+      );
+      for (const approver of approvers.rows) {
+        await client.query(
+          `INSERT INTO eco_approvals (eco_id, approver_id, status) VALUES ($1, $2, 'PENDING')`,
+          [ecoId, approver.id]
+        );
+      }
+    }
+
     await client.query(
       'UPDATE ecos SET stage_id = $1 WHERE id = $2',
       [nextStage.id, ecoId]
@@ -509,8 +530,6 @@ async function validateEco(ecoId, userId) {
 
     await client.query('COMMIT');
 
-    // If next stage is final and doesn't require approval, might need to handle
-    // But per spec, validate just advances one stage
     const updatedEco = await getEcoById(ecoId);
     return updatedEco;
   } catch (err) {
@@ -552,13 +571,15 @@ async function deleteEco(ecoId, userId) {
 /**
  * ============================================================
  * applyECO — The heart of the system
- * Must be a database transaction — atomic, all-or-nothing
+ * Accepts an optional existingClient for transaction safety.
+ * If no client is provided, manages its own transaction.
  * ============================================================
  */
-async function applyEco(ecoId, userId) {
-  const client = await pool.connect();
+async function applyEco(ecoId, userId, existingClient = null) {
+  const client = existingClient || await pool.connect();
+  const shouldManageTransaction = !existingClient;
   try {
-    await client.query('BEGIN');
+    if (shouldManageTransaction) await client.query('BEGIN');
 
     // 1. Fetch the ECO with all proposed changes
     const ecoResult = await client.query('SELECT * FROM ecos WHERE id = $1 FOR UPDATE', [ecoId]);
@@ -740,7 +761,7 @@ async function applyEco(ecoId, userId) {
 
         for (const op of currentOperations.rows) {
           const change = opChangeMap.get(op.operation_name);
-          const time_minutes = change && change.new_time !== null ? change.new_time : op.time_minutes;
+          const time_minutes = change && change.new_time_minutes !== null ? change.new_time_minutes : op.time_minutes;
           await client.query(
             `INSERT INTO bom_operations (bom_version_id, operation_name, time_minutes, work_center)
              VALUES ($1, $2, $3, $4)`,
@@ -754,7 +775,7 @@ async function applyEco(ecoId, userId) {
           await client.query(
             `INSERT INTO bom_operations (bom_version_id, operation_name, time_minutes, work_center)
              VALUES ($1, $2, $3, $4)`,
-            [newBomVersionId, opName, change.new_time, null]
+            [newBomVersionId, opName, change.new_time_minutes, null]
           );
         }
 
@@ -810,12 +831,12 @@ async function applyEco(ecoId, userId) {
           if (existing.rows.length > 0) {
             await client.query(
               `UPDATE bom_operations SET time_minutes = $1 WHERE bom_version_id = $2 AND operation_name = $3`,
-              [oc.new_time, currentBomVersion.id, oc.operation_name]
+              [oc.new_time_minutes, currentBomVersion.id, oc.operation_name]
             );
           } else {
             await client.query(
               `INSERT INTO bom_operations (bom_version_id, operation_name, time_minutes) VALUES ($1, $2, $3)`,
-              [currentBomVersion.id, oc.operation_name, oc.new_time]
+              [currentBomVersion.id, oc.operation_name, oc.new_time_minutes]
             );
           }
         }
@@ -843,12 +864,12 @@ async function applyEco(ecoId, userId) {
       [finalStage ? finalStage.id : eco.stage_id, ecoId]
     );
 
-    await client.query('COMMIT');
+    if (shouldManageTransaction) await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (shouldManageTransaction) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (shouldManageTransaction) client.release();
   }
 }
 

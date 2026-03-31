@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { useEcos } from '../../hooks/useEcos';
@@ -17,6 +17,8 @@ export default function EcoList() {
   const [status, setStatus] = useState(user?.role === 'operations' ? 'DONE' : '');
   const [search, setSearch] = useState('');
 
+  useEffect(() => { document.title = 'Change Orders — PLM'; }, []);
+
   const { data, isLoading } = useEcos({ type: type || undefined, status: status || undefined, page, limit: 20 });
   const ecos = (data?.data || []).filter(e => !search || e.title?.toLowerCase().includes(search.toLowerCase()));
 
@@ -24,7 +26,17 @@ export default function EcoList() {
     { header: 'Title', cell: (row) => <Link to={`/ecos/${row.id}`} className="text-accent-blue hover:underline font-medium">{row.title}</Link> },
     { header: 'Type', cell: (row) => <StatusBadge status={row.type} /> },
     { header: 'Product', cell: (row) => <span className="text-text-secondary">{row.product_name}</span> },
-    { header: 'Stage', cell: (row) => <span className="text-xs font-display text-text-muted">{row.stage_name}</span> },
+    { header: 'Stage', cell: (row) => (
+      <div className="flex items-center gap-1.5">
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+          row.status === 'DONE' ? 'bg-accent-green' :
+          row.status === 'REJECTED' ? 'bg-accent-red' :
+          row.status === 'IN_PROGRESS' ? 'bg-accent-amber' :
+          'bg-text-muted'
+        }`} />
+        <span className="text-xs font-display text-text-secondary">{row.stage_name || 'NEW'}</span>
+      </div>
+    )},
     { header: 'Status', cell: (row) => <StatusBadge status={row.status} /> },
     { header: 'Created', cell: (row) => <span className="text-xs">{formatDate(row.created_at)}</span> },
     { header: 'Actions', cell: (row) => <Link to={`/ecos/${row.id}`} className="text-xs text-accent-blue hover:underline">View</Link> },

@@ -7,10 +7,14 @@ const { authLimiter } = require('../../middleware/rateLimiter');
 const router = Router();
 
 const signupSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   email: z.string().email('Invalid email format').max(150),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-  role_id: z.number().int().min(1).max(4),
+  password: z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+    .regex(/[0-9]/, 'Must contain at least one number')
+    .regex(/[^A-Za-z0-9]/, 'Must contain at least one special character'),
 });
 
 const loginSchema = z.object({

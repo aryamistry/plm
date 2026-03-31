@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useEco, useEcoDiff, useEcoStages, useSubmitEco, useValidateEco, useDeleteEco } from '../../hooks/useEcos';
 import { useApproveEco, useRejectEco } from '../../hooks/useApprovals';
@@ -29,6 +29,8 @@ export default function EcoDetail() {
   const [showDelete, setShowDelete] = useState(false);
   const [showReject, setShowReject] = useState(false);
 
+  useEffect(() => { document.title = `ECO #${id} — PLM`; }, [id]);
+
   if (isLoading) return <LoadingSpinner />;
   const eco = data?.data;
   if (!eco) return <div className="text-text-muted text-center py-8">ECO not found.</div>;
@@ -42,7 +44,7 @@ export default function EcoDetail() {
 
   return (
     <div>
-      <PageHeader title={eco.title}>
+      <PageHeader title={eco.title} backTo="/ecos" backLabel="Back to ECOs">
         <div className="flex items-center gap-2 flex-wrap">
           {canProposeChanges(user, eco) && (
             <Link to={`/ecos/${id}/propose`}
@@ -86,6 +88,18 @@ export default function EcoDetail() {
         </div>
       </PageHeader>
 
+      {/* Rejected Banner */}
+      {eco.status === 'REJECTED' && (
+        <div className="mb-6 bg-accent-red/10 border border-accent-red/30 rounded-card p-4">
+          <p className="text-accent-red font-medium text-sm flex items-center gap-2">
+            <X size={15}/> This ECO has been rejected.
+          </p>
+          <p className="text-text-secondary text-xs mt-1">
+            Review the proposed changes, update them, and create a new ECO if needed.
+          </p>
+        </div>
+      )}
+
       {/* Stage Bar */}
       <EcoStageBar stages={stages} currentStageId={eco.stage_id} ecoStatus={eco.status} />
 
@@ -94,8 +108,9 @@ export default function EcoDetail() {
         {[
           { label: 'Type', value: <StatusBadge status={eco.type} /> },
           { label: 'Status', value: <StatusBadge status={eco.status} /> },
-          { label: 'Product', value: <Link to={`/products/${eco.product_id}`} className="text-accent-blue hover:underline">{eco.product_name}</Link> },
+          { label: 'Product', value: <Link to={`/products/${eco.product_id}`} className="text-accent-blue hover:underline">{eco.product_code ? `${eco.product_code} — ` : ''}{eco.product_name}</Link> },
           { label: 'Version Update', value: eco.version_update ? 'New version' : 'In-place' },
+          ...(eco.bom_id ? [{ label: 'Target BoM', value: <Link to={`/boms/${eco.bom_id}`} className="text-accent-blue hover:underline">BoM #{eco.bom_id}</Link> }] : []),
           { label: 'Effective Date', value: formatDate(eco.effective_date) },
           { label: 'Created By', value: eco.created_by_name || `User #${eco.created_by}` },
           { label: 'Created', value: formatDate(eco.created_at) },

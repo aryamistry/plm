@@ -4,10 +4,11 @@
  * Set DATABASE_URL in .env to point to a test database.
  */
 const request = require('supertest');
+const bcrypt = require('bcryptjs');
 const app = require('../src/app');
 const pool = require('../src/config/db');
 
-// Helper: clean all tables
+// Helper: clean all tables (order matters due to foreign keys)
 async function cleanDatabase() {
   await pool.query(`
     DELETE FROM audit_logs;
@@ -23,6 +24,7 @@ async function cleanDatabase() {
     DELETE FROM boms;
     DELETE FROM product_versions;
     DELETE FROM products;
+    DELETE FROM refresh_tokens;
     DELETE FROM users;
   `);
 }
@@ -50,19 +52,24 @@ async function seedStages() {
   `);
 }
 
-// Helper: create a user and get token
+// Helper: create a user directly in DB with specific role and get token via login
+// Since public signup only allows operations role, we insert directly for test users
 async function createUserAndLogin(userData = {}) {
+  const suffix = `${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
   const defaultUser = {
     name: 'Test User',
-    email: `test_${Date.now()}_${Math.random().toString(36).substr(2, 5)}@test.com`,
-    password: 'password123',
+    email: `test_${suffix}@test.com`,
+    password: 'TestPass1!',
     role_id: 1, // engineering
   };
   const user = { ...defaultUser, ...userData };
 
-  await request(app)
-    .post('/api/auth/signup')
-    .send(user);
+  // Insert user directly into DB with requested role (bypassing signup role restriction)
+  const hashedPassword = await bcrypt.hash(user.password, 10);
+  await pool.query(
+    'INSERT INTO users (name, email, password, role_id) VALUES ($1, $2, $3, $4)',
+    [user.name, user.email, hashedPassword, user.role_id]
+  );
 
   const loginRes = await request(app)
     .post('/api/auth/login')
@@ -75,6 +82,22 @@ async function createUserAndLogin(userData = {}) {
   };
 }
 
+// Helper: create a product (requires product_code now)
+async function createProduct(token, overrides = {}) {
+  const suffix = Date.now();
+  const res = await request(app)
+    .post('/api/products')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      product_code: overrides.product_code || `PROD-${suffix}`,
+      name: overrides.name || 'Test Product',
+      sale_price: overrides.sale_price || 100,
+      cost_price: overrides.cost_price || 50,
+      ...overrides,
+    });
+  return res.body.data;
+}
+
 module.exports = {
   app,
   pool,
@@ -83,4 +106,5 @@ module.exports = {
   seedRoles,
   seedStages,
   createUserAndLogin,
+  createProduct,
 };

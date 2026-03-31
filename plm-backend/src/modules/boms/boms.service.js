@@ -125,12 +125,13 @@ async function listBoms({ product_id, status, page, limit, offset, roleName }) {
   const queryParams = [...params, limit, offset];
   const result = await pool.query(
     `SELECT b.id, b.product_id, b.created_at, p.name AS product_name,
-            (SELECT COUNT(*) FROM bom_versions bv2 WHERE bv2.bom_id = b.id) AS version_count
+            COUNT(bv.id) AS version_count,
+            MAX(CASE WHEN bv.status = 'ACTIVE' THEN bv.version END) AS active_version
      FROM boms b
      JOIN products p ON p.id = b.product_id
      JOIN bom_versions bv ON bv.bom_id = b.id
      ${whereClause}
-     GROUP BY b.id, p.name, bv.status
+     GROUP BY b.id, p.name
      ORDER BY b.id ASC
      LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
     queryParams

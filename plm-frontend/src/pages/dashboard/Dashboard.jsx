@@ -15,7 +15,7 @@ export default function Dashboard() {
   const { data: productsData, isLoading: loadingProducts } = useProducts({ status: 'ACTIVE', limit: 100 });
   const { data: bomsData, isLoading: loadingBoms } = useBoms({ status: 'ACTIVE', limit: 100 });
   const { data: ecosData, isLoading: loadingEcos } = useEcos({ limit: 10 });
-  const { data: approvalsData } = useApprovals();
+  const { data: approvalsData } = useApprovals(canAccessApprovals(user));
 
   const stats = [
     { label: 'Active Products', value: productsData?.pagination?.total || 0, icon: Package, color: 'border-accent-cyan', loading: loadingProducts },

@@ -1,14 +1,14 @@
 const pool = require('../../config/db');
 const { logAudit } = require('../../utils/auditLogger');
 
-async function createProduct({ name, sale_price, cost_price, attachments }, userId) {
+async function createProduct({ product_code, name, sale_price, cost_price, attachments }, userId) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const productResult = await client.query(
-      `INSERT INTO products (name, created_by) VALUES ($1, $2) RETURNING *`,
-      [name, userId]
+      `INSERT INTO products (product_code, name, created_by) VALUES ($1, $2, $3) RETURNING *`,
+      [product_code, name, userId]
     );
     const product = productResult.rows[0];
 
@@ -38,61 +38,70 @@ async function createProduct({ name, sale_price, cost_price, attachments }, user
   }
 }
 
-async function listProducts({ status, page, limit, offset, roleName }) {
+async function listProducts({ status, search, page, limit, offset, roleName }) {
   let statusFilter = status;
   if (roleName === 'operations') {
     statusFilter = 'ACTIVE';
   }
 
-  let whereClause = '';
   const params = [];
+  const conditions = [];
   let paramIdx = 1;
 
-  if (statusFilter) {
-    whereClause = `WHERE pv.status = $${paramIdx++}`;
-    params.push(statusFilter);
+  if (search) {
+    conditions.push(`(p.name ILIKE $${paramIdx} OR p.product_code ILIKE $${paramIdx})`);
+    params.push(`%${search}%`);
+    paramIdx++;
   }
 
-  // Count total
-  const countQuery = `
-    SELECT COUNT(DISTINCT p.id)
-    FROM products p
-    JOIN product_versions pv ON pv.product_id = p.id
-    ${statusFilter ? `AND pv.status = $1` : ''}
-    ${statusFilter ? `WHERE pv.id = (SELECT pv2.id FROM product_versions pv2 WHERE pv2.product_id = p.id ${statusFilter ? `AND pv2.status = $1` : ''} ORDER BY pv2.version DESC LIMIT 1)` : ''}
-  `;
+  const searchWhere = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-  // Simpler approach: get products with their latest version matching the filter
   const query = `
-    SELECT p.id, p.name, p.created_by, p.created_at,
+    SELECT p.id, p.product_code, p.name, p.created_by, p.created_at,
            pv.id AS version_id, pv.version, pv.sale_price, pv.cost_price,
            pv.attachments, pv.status AS version_status, pv.created_at AS version_created_at
     FROM products p
     JOIN LATERAL (
       SELECT * FROM product_versions pv2
       WHERE pv2.product_id = p.id
-      ${statusFilter ? `AND pv2.status = $${params.length}` : ''}
+      ${statusFilter ? `AND pv2.status = $${paramIdx++}` : ''}
       ORDER BY pv2.version DESC LIMIT 1
     ) pv ON true
+    ${searchWhere}
     ORDER BY p.id ASC
     LIMIT $${paramIdx++} OFFSET $${paramIdx++}
   `;
+
+  if (statusFilter) params.push(statusFilter);
   params.push(limit, offset);
 
   const result = await pool.query(query, params);
 
   // Count
-  const countParams = statusFilter ? [statusFilter] : [];
+  const countParams = [];
+  const countConditions = [];
+  let cidx = 1;
+  if (statusFilter) {
+    countConditions.push(`pv.status = $${cidx++}`);
+    countParams.push(statusFilter);
+  }
+  if (search) {
+    countConditions.push(`(p.name ILIKE $${cidx} OR p.product_code ILIKE $${cidx})`);
+    countParams.push(`%${search}%`);
+    cidx++;
+  }
+  const countWhere = countConditions.length > 0 ? 'WHERE ' + countConditions.join(' AND ') : '';
   const countRes = await pool.query(
     `SELECT COUNT(DISTINCT p.id) FROM products p
      JOIN product_versions pv ON pv.product_id = p.id
-     ${statusFilter ? 'WHERE pv.status = $1' : ''}`,
+     ${countWhere}`,
     countParams
   );
   const total = parseInt(countRes.rows[0].count, 10);
 
   const products = result.rows.map(row => ({
     id: row.id,
+    product_code: row.product_code,
     name: row.name,
     created_by: row.created_by,
     created_at: row.created_at,

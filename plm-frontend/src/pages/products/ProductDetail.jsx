@@ -27,7 +27,7 @@ export default function ProductDetail() {
 
   return (
     <div>
-      <PageHeader title={product.name} description={`Product #${product.id} • Created ${formatDate(product.created_at)}`}>
+      <PageHeader title={product.name} description={`Product #${product.id} • Created ${formatDate(product.created_at)}`} backTo="/products" backLabel="Back to Products">
         {canCreateEco(user) && activeVersion && (
           <Link to={`/ecos/create?product_id=${product.id}`}
             className="flex items-center gap-1.5 bg-accent-blue hover:bg-accent-blue-dim text-white px-3 py-2 rounded-input text-sm font-medium transition-colors">

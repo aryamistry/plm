@@ -2,9 +2,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getMyApprovals, approveEco, rejectEco } from '../api/approvals.api';
 import { toast } from 'sonner';
 
-export const useApprovals = () => useQuery({
+export const useApprovals = (enabled = true) => useQuery({
   queryKey: ['approvals'],
   queryFn: () => getMyApprovals().then(r => r.data),
+  enabled,
 });
 
 export const useApproveEco = () => {

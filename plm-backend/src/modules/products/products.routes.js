@@ -10,6 +10,7 @@ const router = Router();
 router.use(auth);
 
 const createSchema = z.object({
+  product_code: z.string().min(1, 'Product code is required').max(50),
   name: z.string().min(1, 'Product name is required').max(255),
   sale_price: z.number().positive().optional().nullable(),
   cost_price: z.number().positive().optional().nullable(),

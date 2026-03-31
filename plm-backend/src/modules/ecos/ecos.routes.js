@@ -14,7 +14,10 @@ const createSchema = z.object({
   type: z.enum(['PRODUCT', 'BOM']),
   product_id: z.number().int().positive(),
   bom_id: z.number().int().positive().optional().nullable(),
-  effective_date: z.string().optional().nullable(),
+  effective_date: z.string().optional().nullable().refine(
+    (val) => !val || new Date(val) >= new Date(new Date().toDateString()),
+    { message: 'Effective date cannot be in the past' }
+  ),
   version_update: z.boolean().optional().default(true),
 });
 

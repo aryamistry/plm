@@ -1,108 +1,86 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Layers, GitPullRequest, CheckCircle, BarChart2, Settings, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
-import { canAccessApprovals, canAccessSettings } from '../../utils/permissions';
-import { useApprovals } from '../../hooks/useApprovals';
+import { canCreateEco, canAccessSettings, canAccessApprovals } from '../../utils/permissions';
+import {
+  LayoutDashboard, Package, Layers, FileText, CheckSquare,
+  BarChart3, Settings, Users, ChevronLeft, ChevronRight, LogOut
+} from 'lucide-react';
+import { useState } from 'react';
 
-const navItems = [
-  { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { path: '/products', icon: Package, label: 'Products' },
-  { path: '/boms', icon: Layers, label: 'Bills of Materials' },
-  { path: '/ecos', icon: GitPullRequest, label: 'Change Orders' },
-];
+const NavItem = ({ to, icon, label, collapsed }) => (
+  <NavLink to={to} className={({ isActive }) =>
+    `flex items-center gap-3 px-3 py-2 rounded-input text-sm transition-all duration-200
+     ${isActive
+       ? 'bg-accent-blue/15 text-accent-blue border border-accent-blue/20'
+       : 'text-text-secondary hover:bg-bg-elevated hover:text-text-primary border border-transparent'}`
+  } title={collapsed ? label : undefined}>
+    {icon}
+    {!collapsed && <span>{label}</span>}
+  </NavLink>
+);
 
-export default function Sidebar({ collapsed, onToggle }) {
+export default function Sidebar() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
-  const { data: approvalsData } = useApprovals();
-  const pendingCount = approvalsData?.data?.length || 0;
+  const [collapsed, setCollapsed] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  const linkClass = ({ isActive }) =>
-    `flex items-center gap-3 px-3 py-2.5 rounded-input text-sm transition-colors ${
-      isActive
-        ? 'bg-bg-elevated text-accent-blue border-l-2 border-accent-blue -ml-[2px]'
-        : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated/50'
-    }`;
-
   return (
-    <aside className={`${collapsed ? 'w-16' : 'w-60'} bg-bg-surface border-r border-bg-border flex flex-col transition-all duration-200`}>
-      {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b border-bg-border">
+    <aside className={`${collapsed ? 'w-16' : 'w-56'} bg-bg-surface border-r border-bg-border flex flex-col transition-all duration-300`}>
+      <div className={`h-14 flex items-center ${collapsed ? 'justify-center' : 'px-4 justify-between'} border-b border-bg-border`}>
         {!collapsed && (
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-accent-blue rounded flex items-center justify-center">
-              <span className="text-white text-xs font-bold font-display">P</span>
-            </div>
-            <span className="text-text-primary font-display font-bold text-lg">PLM</span>
+          <div>
+            <h1 className="text-base font-bold text-text-primary font-display tracking-wider">PLM</h1>
+            <p className="text-[9px] text-text-muted uppercase tracking-widest font-display">ECO System</p>
           </div>
         )}
-        <button onClick={onToggle} className="ml-auto text-text-muted hover:text-text-primary p-1">
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        <button onClick={() => setCollapsed(!collapsed)}
+          className="text-text-muted hover:text-text-primary transition-colors p-1">
+          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 p-3 space-y-1">
-        {navItems.map(({ path, icon: Icon, label }) => (
-          <NavLink key={path} to={path} className={linkClass} title={collapsed ? label : undefined}>
-            <Icon size={18} />
-            {!collapsed && <span>{label}</span>}
-          </NavLink>
-        ))}
-
+      <nav className="flex-1 px-2 py-3 space-y-1 overflow-y-auto">
+        <NavItem to="/dashboard" icon={<LayoutDashboard size={15} />} label="Dashboard" collapsed={collapsed} />
+        <NavItem to="/products" icon={<Package size={15} />} label="Products" collapsed={collapsed} />
+        <NavItem to="/boms" icon={<Layers size={15} />} label="Bills of Material" collapsed={collapsed} />
+        <NavItem to="/ecos" icon={<FileText size={15} />} label="Change Orders" collapsed={collapsed} />
         {canAccessApprovals(user) && (
-          <NavLink to="/approvals" className={linkClass} title={collapsed ? 'Approvals' : undefined}>
-            <div className="relative">
-              <CheckCircle size={18} />
-              {pendingCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-accent-red text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center font-bold">
-                  {pendingCount}
-                </span>
-              )}
-            </div>
-            {!collapsed && <span>Approvals</span>}
-            {!collapsed && pendingCount > 0 && (
-              <span className="ml-auto bg-accent-red/20 text-accent-red text-xs px-1.5 py-0.5 rounded font-display">{pendingCount}</span>
-            )}
-          </NavLink>
+          <NavItem to="/approvals" icon={<CheckSquare size={15} />} label="Approvals" collapsed={collapsed} />
         )}
-
-        <NavLink to="/reports" className={linkClass} title={collapsed ? 'Reports' : undefined}>
-          <BarChart2 size={18} />
-          {!collapsed && <span>Reports</span>}
-        </NavLink>
+        <NavItem to="/reports" icon={<BarChart3 size={15} />} label="Reports" collapsed={collapsed} />
 
         {canAccessSettings(user) && (
-          <NavLink to="/settings/eco-stages" className={linkClass} title={collapsed ? 'Settings' : undefined}>
-            <Settings size={18} />
-            {!collapsed && <span>Settings</span>}
-          </NavLink>
+          <div className="mt-4 pt-4 border-t border-bg-border">
+            {!collapsed && <p className="text-[10px] text-text-muted uppercase font-display px-3 mb-1">Admin</p>}
+            <NavItem to="/settings/eco-stages" icon={<Settings size={15} />} label="ECO Stages" collapsed={collapsed} />
+            <NavItem to="/settings/users" icon={<Users size={15} />} label="User Management" collapsed={collapsed} />
+          </div>
         )}
       </nav>
 
-      {/* User section */}
-      <div className="p-3 border-t border-bg-border">
-        <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'}`}>
-          <div className="w-8 h-8 bg-accent-blue/20 text-accent-blue rounded-full flex items-center justify-center text-sm font-bold">
-            {user?.name?.[0]?.toUpperCase() || 'U'}
-          </div>
-          {!collapsed && (
-            <div className="flex-1 min-w-0">
-              <p className="text-sm text-text-primary truncate">{user?.name}</p>
-              <p className="text-xs text-text-muted font-display uppercase">{user?.role}</p>
+      <div className={`px-3 py-3 border-t border-bg-border ${collapsed ? 'text-center' : ''}`}>
+        {collapsed ? (
+          <button onClick={handleLogout} title="Logout"
+            className="w-7 h-7 bg-accent-red/15 rounded-full flex items-center justify-center text-accent-red text-xs mx-auto hover:bg-accent-red/25 transition-colors">
+            <LogOut size={13} />
+          </button>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <p className="text-xs text-text-primary truncate font-medium">{user?.name}</p>
+              <p className="text-[10px] text-text-muted font-display uppercase">{user?.role}</p>
             </div>
-          )}
-          {!collapsed && (
-            <button onClick={handleLogout} className="text-text-muted hover:text-accent-red p-1" title="Logout">
-              <LogOut size={16} />
+            <button onClick={handleLogout} title="Logout"
+              className="text-text-muted hover:text-accent-red transition-colors p-1 flex-shrink-0">
+              <LogOut size={14} />
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </aside>
   );

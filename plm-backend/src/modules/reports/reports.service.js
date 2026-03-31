@@ -12,58 +12,48 @@ async function getEcosReport({ type, status, from, to }) {
 
   const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
+  // Single query with LEFT JOINs — no N+1
   const result = await pool.query(
-    `SELECT e.id AS eco_id, e.title, e.type, p.name AS product_name,
-            e.status, es.name AS stage_name, e.created_at
+    `SELECT e.id AS eco_id, e.title, e.type, p.name AS product_name, p.product_code,
+            e.status, es.name AS stage_name, e.created_at,
+            pc.new_sale_price, pc.new_cost_price,
+            COUNT(bcc.id) AS component_change_count
      FROM ecos e
      JOIN products p ON p.id = e.product_id
      LEFT JOIN eco_stages es ON es.id = e.stage_id
+     LEFT JOIN eco_product_changes pc ON pc.eco_id = e.id
+     LEFT JOIN eco_bom_component_changes bcc ON bcc.eco_id = e.id
      ${whereClause}
+     GROUP BY e.id, p.name, p.product_code, es.name, pc.new_sale_price, pc.new_cost_price
      ORDER BY e.id DESC`,
     params
   );
 
-  // Generate changes_summary for each ECO
-  const ecos = [];
-  for (const row of result.rows) {
+  const ecos = result.rows.map(row => {
     let changes_summary = 'No changes';
-
     if (row.type === 'PRODUCT') {
-      const pc = await pool.query('SELECT * FROM eco_product_changes WHERE eco_id = $1', [row.eco_id]);
-      if (pc.rows.length > 0) {
-        const c = pc.rows[0];
-        const parts = [];
-        if (c.new_sale_price !== null) parts.push(`Sale price → ${c.new_sale_price}`);
-        if (c.new_cost_price !== null) parts.push(`Cost price → ${c.new_cost_price}`);
-        changes_summary = parts.length > 0 ? parts.join(', ') : 'No changes';
-      }
+      const parts = [];
+      if (row.new_sale_price !== null) parts.push(`Sale price → ${row.new_sale_price}`);
+      if (row.new_cost_price !== null) parts.push(`Cost price → ${row.new_cost_price}`);
+      changes_summary = parts.length > 0 ? parts.join(', ') : 'No changes';
     } else {
-      const bcc = await pool.query('SELECT * FROM eco_bom_component_changes WHERE eco_id = $1 LIMIT 3', [row.eco_id]);
-      if (bcc.rows.length > 0) {
-        const parts = bcc.rows.map(c => {
-          const oldQ = c.old_quantity || 0;
-          const newQ = c.new_quantity || 0;
-          return `Component ${c.component_product_id}: ${oldQ} → ${newQ}`;
-        });
-        changes_summary = parts.join('; ');
-      }
+      const count = parseInt(row.component_change_count, 10);
+      changes_summary = count > 0 ? `${count} component change(s)` : 'No changes';
     }
-
-    ecos.push({ ...row, changes_summary });
-  }
+    return { ...row, changes_summary };
+  });
 
   return ecos;
 }
 
 async function getEcoChanges(ecoId) {
-  // Delegates to the same logic as ECO diff
   const ecosService = require('../ecos/ecos.service');
   return ecosService.getEcoDiff(ecoId);
 }
 
 async function getProductVersionHistory() {
   const result = await pool.query(
-    `SELECT p.id, p.name, pv.version, pv.sale_price, pv.cost_price,
+    `SELECT p.id, p.product_code, p.name, pv.version, pv.sale_price, pv.cost_price,
             pv.status, pv.created_at
      FROM products p
      JOIN product_versions pv ON pv.product_id = p.id
@@ -73,55 +63,58 @@ async function getProductVersionHistory() {
 }
 
 async function getBomChangeHistory() {
-  const result = await pool.query(
-    `SELECT b.id AS bom_id, p.name AS product_name, bv.version, bv.status, bv.created_at
-     FROM boms b
-     JOIN products p ON p.id = b.product_id
-     JOIN bom_versions bv ON bv.bom_id = b.id
-     ORDER BY b.id ASC, bv.version DESC`
-  );
+  // Single query with aggregation — no N+1
+  const result = await pool.query(`
+    SELECT
+      b.id AS bom_id,
+      p.name AS product_name,
+      bv.id AS version_id,
+      bv.version,
+      bv.status,
+      bv.created_at,
+      json_agg(DISTINCT jsonb_build_object(
+        'component_product_id', bc.component_product_id,
+        'quantity', bc.quantity,
+        'component_name', cp.name
+      )) FILTER (WHERE bc.id IS NOT NULL) AS components,
+      json_agg(DISTINCT jsonb_build_object(
+        'operation_name', bo.operation_name,
+        'time_minutes', bo.time_minutes,
+        'work_center', bo.work_center
+      )) FILTER (WHERE bo.id IS NOT NULL) AS operations
+    FROM boms b
+    JOIN products p ON p.id = b.product_id
+    JOIN bom_versions bv ON bv.bom_id = b.id
+    LEFT JOIN bom_components bc ON bc.bom_version_id = bv.id
+    LEFT JOIN products cp ON cp.id = bc.component_product_id
+    LEFT JOIN bom_operations bo ON bo.bom_version_id = bv.id
+    GROUP BY b.id, p.name, bv.id
+    ORDER BY b.id ASC, bv.version DESC
+  `);
 
+  // Group by bom_id
   const boms = [];
   const bomMap = new Map();
-
   for (const row of result.rows) {
     if (!bomMap.has(row.bom_id)) {
       const bom = { bom_id: row.bom_id, product_name: row.product_name, versions: [] };
       bomMap.set(row.bom_id, bom);
       boms.push(bom);
     }
-
-    const compResult = await pool.query(
-      `SELECT bc.*, p2.name AS component_name
-       FROM bom_components bc
-       JOIN products p2 ON p2.id = bc.component_product_id
-       JOIN bom_versions bv ON bv.id = bc.bom_version_id
-       WHERE bv.bom_id = $1 AND bv.version = $2`,
-      [row.bom_id, row.version]
-    );
-    const opsResult = await pool.query(
-      `SELECT bo.*
-       FROM bom_operations bo
-       JOIN bom_versions bv ON bv.id = bo.bom_version_id
-       WHERE bv.bom_id = $1 AND bv.version = $2`,
-      [row.bom_id, row.version]
-    );
-
     bomMap.get(row.bom_id).versions.push({
       version: row.version,
       status: row.status,
       created_at: row.created_at,
-      components: compResult.rows,
-      operations: opsResult.rows,
+      components: row.components || [],
+      operations: row.operations || [],
     });
   }
-
   return boms;
 }
 
 async function getArchivedProducts() {
   const result = await pool.query(
-    `SELECT p.id AS product_id, p.name AS product_name,
+    `SELECT p.id AS product_id, p.product_code, p.name AS product_name,
             pv.id AS version_id, pv.version, pv.sale_price, pv.cost_price,
             pv.attachments, pv.status, pv.created_at
      FROM product_versions pv
@@ -134,7 +127,7 @@ async function getArchivedProducts() {
 
 async function getActiveMatrix() {
   const result = await pool.query(
-    `SELECT p.id AS product_id, p.name AS product_name,
+    `SELECT p.id AS product_id, p.product_code, p.name AS product_name,
             pv.version, pv.sale_price, pv.cost_price,
             b.id AS bom_id, bv.version AS bom_version
      FROM products p
@@ -153,6 +146,7 @@ async function getActiveMatrix() {
 
     matrix.push({
       product_id: row.product_id,
+      product_code: row.product_code,
       product_name: row.product_name,
       active_version: {
         version: row.version,
